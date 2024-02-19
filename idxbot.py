@@ -1,14 +1,10 @@
 import requests
 import asyncio
-import time
 from telegram import Bot
 from emoji import emojize
 
-bot_token = "YOUR_BOT_TOKEN"  # Ganti dengan token bot Anda
-chat_id = "YOUR_ChAT_ID"  # Ganti dengan ID grup Telegram Anda
-
 # Fungsi untuk mengirim pesan ke grup Telegram
-async def send_telegram_message(message):
+async def send_telegram_message(bot_token, chat_id, message):
     bot = Bot(token=bot_token)
     await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
@@ -32,7 +28,7 @@ def get_crypto_price(pair):
         return None
 
 # Fungsi untuk memonitor kenaikan atau penurunan harga
-async def monitor_price_change(threshold_percent=5):
+async def monitor_price_change(bot_token, chat_id, threshold_percent=5):
     all_pairs = get_all_pairs()
 
     # Inisialisasi harga awal untuk setiap pasangan
@@ -61,10 +57,14 @@ async def monitor_price_change(threshold_percent=5):
                             fire_emoji = emojize(":fire:")
                             message = f"<b>{pair.upper()}</b> Harga <b>{change_type}</b> {fire_emoji} <code>{percentage_change:.2f}%</code> " \
                                       f"(harga sekarang: Rp.{current_price:,.0f})"
-                        await send_telegram_message(message)
+                        await send_telegram_message(bot_token, chat_id, message)
                         print("Notification sent!")  # Menampilkan status notifikasi terkirim
 
-        await asyncio.sleep(15)  # Periksa setiap 5 detik
+        await asyncio.sleep(15)  # Periksa setiap 15 detik
 
 if __name__ == '__main__':
-    asyncio.run(monitor_price_change())
+    # Masukkan token dan chat ID saat runtime
+    bot_token = input("Masukkan Bot Token: ")
+    chat_id = input("Masukkan Chat ID: ")
+
+    asyncio.run(monitor_price_change(bot_token, chat_id))
