@@ -59,7 +59,7 @@ async def api_limiter():
         await asyncio.sleep(1)
 
 # Fungsi untuk memonitor kenaikan atau penurunan harga
-async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshold_price_idr=25):
+async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshold_price_idr=25, interval=5):
     all_pairs = get_all_pairs()
     initial_prices = {}
 
@@ -184,36 +184,36 @@ async def check_connection(bot_token, chat_id):
 
 async def main():
     try:
-        bot_token = input("Masukkan Bot Token: ")
-        chat_id = input("Masukkan Chat ID: ")
-        threshold_percent = float(input("Masukkan persentase perubahan harga yang diinginkan: "))
-        interval = float(input("Masukkan waktu interval pemantauan harga (detik): "))
-        volume_threshold = float(input("Masukkan ambang batas volume (IDR): "))
-        volume_interval = int(input("Masukkan interval waktu pemantauan volume (detik): "))
-        
-        while True:
-            config = load_config()
-            if not config:
-                config = {
-                    "bot_token": bot_token,
-                    "chat_id": chat_id,
-                    "threshold_percent": threshold_percent,
-                    "interval": interval,
-                    "volume_threshold": volume_threshold,
-                    "volume_interval": volume_interval
-                }
-                save_config(config)
-            else:
-                bot_token = config["bot_token"]
-                chat_id = config["chat_id"]
-                threshold_percent = config["threshold_percent"]
-                interval = config["interval"]
-                volume_threshold = config.get("volume_threshold", None)
-                volume_interval = config.get("volume_interval", None)
+        config = load_config()
+        if not config:
+            bot_token = input("Masukkan Bot Token: ")
+            chat_id = input("Masukkan Chat ID: ")
+            threshold_percent = float(input("Masukkan persentase perubahan harga yang diinginkan: "))
+            interval = float(input("Masukkan waktu interval pemantauan harga (detik): "))
+            volume_threshold = float(input("Masukkan ambang batas volume (IDR): "))
+            volume_interval = int(input("Masukkan interval waktu pemantauan volume (detik): "))
+            
+            config = {
+                "bot_token": bot_token,
+                "chat_id": chat_id,
+                "threshold_percent": threshold_percent,
+                "interval": interval,
+                "volume_threshold": volume_threshold,
+                "volume_interval": volume_interval
+            }
+            save_config(config)
+        else:
+            bot_token = config["bot_token"]
+            chat_id = config["chat_id"]
+            threshold_percent = config["threshold_percent"]
+            interval = config["interval"]
+            volume_threshold = config.get("volume_threshold", None)
+            volume_interval = config.get("volume_interval", None)
 
+        while True:
             connection_ok = await check_connection(bot_token, chat_id)
             if connection_ok:
-                tasks = [monitor_price_change(bot_token, chat_id, threshold_percent, threshold_price_idr=25)]
+                tasks = [monitor_price_change(bot_token, chat_id, threshold_percent, threshold_price_idr=25, interval=interval)]
                 if volume_threshold is not None and volume_interval is not None:
                     tasks.append(monitor_volume(bot_token, chat_id, volume_interval, volume_threshold))
                 await asyncio.gather(*tasks)
