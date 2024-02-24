@@ -1,11 +1,10 @@
 import requests
 import asyncio
 from telegram import Bot
-from emoji import emojize
 import json
 import time
-from datetime import timedelta
 from async_lru import alru_cache
+from aiolimiter import AsyncLimiter
 
 config_file = "config.json"
 
@@ -50,21 +49,22 @@ async def get_crypto_data(pair):
     else:
         return None, None
 
-# Semaphore untuk membatasi jumlah permintaan ke API
-api_semaphore = asyncio.Semaphore(180)
+# Inisialisasi rate limiter dengan batas 120 permintaan per menit
+rate_limiter = AsyncLimiter(120, 60)
 
-# Fungsi untuk membatasi permintaan ke API Indodax
+# Fungsi untuk membatasi permintaan ke API Indodax dengan rate limiter
 async def api_limiter():
-    async with api_semaphore:
-        await asyncio.sleep(1)
+    async with rate_limiter:
+        await asyncio.sleep(1)  # Menunggu 1 detik sebagai tindakan pencegahan
 
 # Fungsi untuk memonitor kenaikan atau penurunan harga
-async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshold_price_idr=25, threshold_volume_idr=400_000_000, interval=15):
+async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshold_price_idr=25, interval=5, volume_threshold=300_000_000):
     all_pairs = get_all_pairs()
     initial_prices = {}
+    initial_volumes = {}
 
     print("Initiating Bot...")
-    print("Bot is running... Monitoring Price change..")
+    print("Bot is running... Monitoring Price changes..")
 
     while True:
         start_time = time.time()  # Waktu awal permintaan
@@ -72,67 +72,38 @@ async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshol
             await api_limiter()  # Menerapkan pembatasan permintaan
             current_price, volume = await get_crypto_data(pair)
 
-            if current_price is None or volume is None:
+            # Skip pair dengan volume di bawah threshold
+            if volume is not None and volume < volume_threshold:
                 continue
 
-            if current_price < threshold_price_idr or volume < threshold_volume_idr:
+            # Skip pair dengan harga di bawah threshold untuk IDR atau tidak ada harga saat ini
+            if pair.endswith('idr') and (current_price is None or current_price < threshold_price_idr):
                 continue
 
-            initial_price = initial_prices.get(pair, current_price)
+            if current_price is not None and initial_prices.get(pair) is not None:
+                initial_price = initial_prices[pair]
+                initial_volume = initial_volumes[pair]
 
-            if initial_price != 0:
                 percentage_change = ((current_price - initial_price) / initial_price) * 100
-                change_type = 'naik' if percentage_change > 0 else 'turun'
+                change_type = '+' if percentage_change > 0 else '-'
                 percentage_change = abs(percentage_change)
+                volume_change = volume - initial_volume
+                volume_change_text = f" (Volume naik Rp. {volume_change:,.0f})" if volume_change > 0 else ""
+
                 if percentage_change >= threshold_percent:
                     chart_link = f'<a href="https://indodax.com/chart/{pair.upper()}">{pair.upper()}</a>'
                     if pair.endswith('usdt'):
                         price_text = f"USD ${current_price:.8f}" if current_price >= 0.01 else f"USD ${current_price:.8e}"
                     else:
                         price_text = f"Rp.{current_price:,.0f}"
-                    volume_text = f"IDR {volume:,.0f}"
-                    if change_type == 'naik':
-                        emoji = emojize(":rocket:")
-                        message = f"{chart_link} Harga {change_type} {emoji} <code>+{percentage_change:.2f}%</code> " \
-                                  f"(harga sekarang: {price_text}) Volume {volume_text}"
-                    else:
-                        emoji = emojize(":fire:")
-                        message = f"{chart_link} Harga {change_type} {emoji} <code>-{percentage_change:.2f}%</code> " \
-                                  f"(harga sekarang: {price_text}) Volume {volume_text}"
+                    volume_text = f"Rp.{volume:,.2f}"
+                    emoji = "🚀" if change_type == '+' else "🔻"
+                    message = f"{emoji} {chart_link} Harga {change_type} <code>{percentage_change:.2f}%</code> " \
+                              f"(harga sekarang: {price_text}) Volume {volume_text}{volume_change_text}"
                     await send_telegram_message(message, bot_token, chat_id)
 
             initial_prices[pair] = current_price
-
-        elapsed_time = time.time() - start_time  # Waktu yang dibutuhkan untuk satu iterasi
-        if elapsed_time < interval:  # Menunggu sisa waktu interval
-            await asyncio.sleep(interval - elapsed_time)
-
-# Fungsi untuk memantau volume selama 5 menit
-async def monitor_volume(bot_token, chat_id, interval=300, threshold_volume=200_000_000):
-    all_pairs = get_all_pairs()
-    initial_volumes = {}
-
-    print("Bot is running... Monitoring Volume change..")
-
-    while True:
-        start_time = time.time()  # Waktu awal pemantauan
-        for pair in all_pairs:
-            await api_limiter()  # Menerapkan pembatasan permintaan
-            _, volume = await get_crypto_data(pair)
-
-            if volume is not None:
-                initial_volume = initial_volumes.get(pair, volume)
-
-                if initial_volume != 0:
-                    volume_change = volume - initial_volume
-
-                    if volume_change >= threshold_volume:
-                        volume_text = f"IDR {volume:,.0f}"
-                        duration = timedelta(seconds=int(time.time() - start_time))
-                        message = f"Volume {pair.upper()} naik 🚀 sebesar {volume_change:,.0f} IDR dalam waktu {duration} (Volume sekarang: {volume_text})"
-                        await send_telegram_message(message, bot_token, chat_id)
-
-                initial_volumes[pair] = volume
+            initial_volumes[pair] = volume
 
         elapsed_time = time.time() - start_time  # Waktu yang dibutuhkan untuk satu iterasi
         if elapsed_time < interval:  # Menunggu sisa waktu interval
@@ -143,15 +114,12 @@ async def reconnect_indodax():
     print("Checking connection to Indodax API...")
     while True:
         try:
-            start_time = time.time()
-            await api_limiter()  # Menerapkan pembatasan permintaan
             response = requests.get("https://indodax.com/api/pairs")
-            latency = time.time() - start_time
             if response.status_code == 200:
-                print(f"Indodax API > OK ({latency} seconds)")
+                print("Indodax API > OK")
                 return True
             else:
-                print(f"Indodax API > Fail ({latency} seconds)")
+                print("Indodax API > Fail")
         except Exception as e:
             print(f"Error checking connection to Indodax API: {str(e)}")
         await asyncio.sleep(10)  # Delay 10 detik sebelum mencoba kembali
@@ -161,15 +129,12 @@ async def check_bot_connection():
     print("Checking connection to Telegram Bot...")
     while True:
         try:
-            start_time = time.time()
-            await api_limiter()  # Menerapkan pembatasan permintaan
             response = requests.get("https://api.telegram.org")
-            latency = time.time() - start_time
             if response.status_code == 200:
-                print(f"Telegram Bot > OK ({latency} seconds)")
+                print("Telegram Bot > OK")
                 return True
             else:
-                print(f"Telegram Bot > Fail ({latency} seconds)")
+                print("Telegram Bot > Fail")
         except Exception as e:
             print(f"Error checking bot connection: {str(e)}")
         await asyncio.sleep(10)  # Delay 10 detik sebelum mencoba kembali
@@ -191,16 +156,12 @@ async def main():
             chat_id = input("Masukkan Chat ID: ")
             threshold_percent = float(input("Masukkan persentase perubahan harga yang diinginkan: "))
             interval = float(input("Masukkan waktu interval pemantauan harga (detik): "))
-            volume_threshold = float(input("Masukkan ambang batas volume (IDR): "))
-            volume_interval = int(input("Masukkan interval waktu pemantauan volume (detik): "))
-
+            
             config = {
                 "bot_token": bot_token,
                 "chat_id": chat_id,
                 "threshold_percent": threshold_percent,
-                "interval": interval,
-                "volume_threshold": volume_threshold,
-                "volume_interval": volume_interval
+                "interval": interval
             }
             save_config(config)
         else:
@@ -208,16 +169,11 @@ async def main():
             chat_id = config["chat_id"]
             threshold_percent = config["threshold_percent"]
             interval = config["interval"]
-            volume_threshold = config.get("volume_threshold", None)
-            volume_interval = config.get("volume_interval", None)
 
         while True:
             connection_ok = await check_connection(bot_token, chat_id)
             if connection_ok:
-                tasks = [monitor_price_change(bot_token, chat_id, threshold_percent, threshold_price_idr=25, threshold_volume_idr=volume_threshold, interval=interval)]
-                if volume_threshold is not None and volume_interval is not None:
-                    tasks.append(monitor_volume(bot_token, chat_id, volume_interval, volume_threshold))
-                await asyncio.gather(*tasks)
+                await monitor_price_change(bot_token, chat_id, threshold_percent, threshold_price_idr=25, interval=interval)
             else:
                 print("Connection failed. Retrying...")
     except Exception as e:
@@ -227,3 +183,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+                        
