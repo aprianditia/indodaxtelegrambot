@@ -64,7 +64,7 @@ async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshol
     initial_volumes = {}
 
     print("Initiating Bot...")
-    print("Bot is running... Monitoring Price changes..")
+    print("Bot is running... Monitoring Price change..")
 
     while True:
         start_time = time.time()  # Waktu awal permintaan
@@ -85,10 +85,10 @@ async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshol
                 initial_volume = initial_volumes[pair]
 
                 percentage_change = ((current_price - initial_price) / initial_price) * 100
-                change_type = '+' if percentage_change > 0 else '-'
+                change_type = '🔻' if percentage_change < 0 else '🚀'
                 percentage_change = abs(percentage_change)
                 volume_change = volume - initial_volume
-                volume_change_text = f" (Volume naik Rp. {volume_change:,.0f})" if volume_change > 0 else ""
+                volume_change_text = f" (Volume trades Rp. {volume_change:,.0f})" if volume_change > 0 else ""
 
                 if percentage_change >= threshold_percent:
                     chart_link = f'<a href="https://indodax.com/chart/{pair.upper()}">{pair.upper()}</a>'
@@ -97,9 +97,7 @@ async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshol
                     else:
                         price_text = f"Rp.{current_price:,.0f}"
                     volume_text = f"Rp.{volume:,.2f}"
-                    emoji = "🚀" if change_type == '+' else "🔻"
-                    message = f"{emoji} {chart_link} Harga {change_type} <code>{percentage_change:.2f}%</code> " \
-                              f"(harga sekarang: {price_text}) Volume {volume_text}{volume_change_text}"
+                    message = f"{change_type} {chart_link} ({'+' if change_type == '🚀' else '-'} {percentage_change:.2f}%)\nHarga : {price_text}\nVolume : {volume_text}\n{volume_change_text}"
                     await send_telegram_message(message, bot_token, chat_id)
 
             initial_prices[pair] = current_price
@@ -183,4 +181,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-                        
+    
