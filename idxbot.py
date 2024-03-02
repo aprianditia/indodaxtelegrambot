@@ -47,6 +47,7 @@ async def get_crypto_data(pair):
         volume = float(data.get('ticker', {}).get('vol_idr', 0))
         return last_price, volume
     else:
+        print(f"Requesting API > Failed to check {pair}. Status code: {response.status_code}")
         return None, None
 
 # Inisialisasi rate limiter dengan batas 120 permintaan per menit
@@ -58,26 +59,28 @@ async def api_limiter():
         await asyncio.sleep(1)  # Menunggu 1 detik sebagai tindakan pencegahan
 
 # Fungsi untuk memonitor kenaikan atau penurunan harga
-async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshold_price_idr=25, interval=5, volume_threshold=300_000_000):
+async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshold_price_idr=25, threshold_volume_change=500_000_000, interval=5, volume_threshold=300_000_000):
     all_pairs = get_all_pairs()
     initial_prices = {}
     initial_volumes = {}
 
     print("Initiating Bot...")
-    print("Bot is running... Monitoring Price change..")
+    print("Bot is running... Monitoring Price changes..")
 
     while True:
         start_time = time.time()  # Waktu awal permintaan
         for pair in all_pairs:
-            await api_limiter()  # Menerapkan pembatasan permintaan
             current_price, volume = await get_crypto_data(pair)
+            await api_limiter()  # Menerapkan pembatasan permintaan
 
             # Skip pair dengan volume di bawah threshold
             if volume is not None and volume < volume_threshold:
+                print(f"Requesting API > Checking {pair} doesn't meet the criteria, continue to check other pairs")
                 continue
 
             # Skip pair dengan harga di bawah threshold untuk IDR atau tidak ada harga saat ini
             if pair.endswith('idr') and (current_price is None or current_price < threshold_price_idr):
+                print(f"Requesting API > Checking {pair} doesn't meet the criteria, continue to check other pairs")
                 continue
 
             if current_price is not None and initial_prices.get(pair) is not None:
@@ -90,7 +93,8 @@ async def monitor_price_change(bot_token, chat_id, threshold_percent=5, threshol
                 volume_change = volume - initial_volume
                 volume_change_text = f" (Volume trades Rp. {volume_change:,.0f})" if volume_change > 0 else ""
 
-                if percentage_change >= threshold_percent:
+                if percentage_change >= threshold_percent and current_price >= threshold_price_idr and abs(volume_change) >= threshold_volume_change:
+                    print(f"Requesting API > Checking {pair} criteria meet. Sending notification...")
                     chart_link = f'<a href="https://indodax.com/chart/{pair.upper()}">{pair.upper()}</a>'
                     if pair.endswith('usdt'):
                         price_text = f"USD ${current_price:.8f}" if current_price >= 0.01 else f"USD ${current_price:.8e}"
@@ -153,25 +157,34 @@ async def main():
             bot_token = input("Masukkan Bot Token: ")
             chat_id = input("Masukkan Chat ID: ")
             threshold_percent = float(input("Masukkan persentase perubahan harga yang diinginkan: "))
+            threshold_price_idr = float(input("Masukkan batas harga IDR yang diinginkan: "))
+            threshold_volume_change = float(input("Masukkan batas perubahan volume yang diinginkan: "))
             interval = float(input("Masukkan waktu interval pemantauan harga (detik): "))
+            volume_threshold = float(input("Masukkan batas volume yang diinginkan: "))
             
             config = {
                 "bot_token": bot_token,
                 "chat_id": chat_id,
                 "threshold_percent": threshold_percent,
-                "interval": interval
+                "threshold_price_idr": threshold_price_idr,
+                "threshold_volume_change": threshold_volume_change,
+                "interval": interval,
+                "volume_threshold": volume_threshold
             }
             save_config(config)
         else:
             bot_token = config["bot_token"]
             chat_id = config["chat_id"]
             threshold_percent = config["threshold_percent"]
+            threshold_price_idr = config["threshold_price_idr"]
+            threshold_volume_change = config["threshold_volume_change"]
             interval = config["interval"]
+            volume_threshold = config["volume_threshold"]
 
         while True:
             connection_ok = await check_connection(bot_token, chat_id)
             if connection_ok:
-                await monitor_price_change(bot_token, chat_id, threshold_percent, threshold_price_idr=25, interval=interval)
+                await monitor_price_change(bot_token, chat_id, threshold_percent, threshold_price_idr, threshold_volume_change, interval, volume_threshold)
             else:
                 print("Connection failed. Retrying...")
     except Exception as e:
@@ -181,4 +194,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-    
+                
